@@ -6,7 +6,7 @@
 
 int main()
 {
-    sf::RenderWindow window(sf::VideoMode({ 800, 600 }), "SFML Window");
+    sf::RenderWindow window(sf::VideoMode({ 1920, 1080 }), "SFML Window");
 
     while (window.isOpen())
     {
