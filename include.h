@@ -4,5 +4,6 @@
 #pragma once
 
 #include <iostream>
+#include <SFML/Graphics.hpp>
 
 // TODO: Reference additional headers your program requires here.

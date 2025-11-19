@@ -23,9 +23,10 @@ FetchContent_MakeAvailable(SFML)
 
 # Add source to this project's executable.
 add_executable (SFMLtest 
-    "SFMLtest.cpp" 
-    "SFMLtest.h" 
+    "main.cpp" 
+    "include.h" 
     "GameObject.h"
+    "Component.h"
 )
 
 target_link_libraries(SFMLtest PRIVATE sfml-graphics sfml-window sfml-system)

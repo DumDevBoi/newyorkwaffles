@@ -1,8 +1,7 @@
 ﻿// SFMLtest.cpp : Defines the entry point for the application.
 //
 
-#include "SFMLtest.h"
-#include <SFML/Graphics.hpp>
+#include "include.h"
 
 int main()
 {
