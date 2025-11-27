@@ -26,8 +26,8 @@ add_executable (SFMLtest
     "main.cpp" 
     "include.h" 
     "GameObject.h"
-    "Component.h"
-)
+    
+ "Component.h")
 
 target_link_libraries(SFMLtest PRIVATE sfml-graphics sfml-window sfml-system)
 
