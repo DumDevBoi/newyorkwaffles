@@ -11,6 +11,50 @@ struct Waffle {
     Waffle(sf::Vector2f position) : pos(position), targetPos(position) {}
 };
 
+void resolveCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
+    const int iterations = 5; // Multiple passes for better stability
+
+    for (int iter = 0; iter < iterations; ++iter) {
+        for (size_t i = 0; i < waffles.size(); ++i) {
+            for (size_t j = i + 1; j < waffles.size(); ++j) {
+                sf::Vector2f diff = waffles[j].pos - waffles[i].pos;
+                float distance = std::sqrt(diff.x * diff.x + diff.y * diff.y);
+                float minDistance = waffleRadius * 2.f;
+
+                if (distance < minDistance && distance > 0.01f) {
+                    // Normalize direction
+                    sf::Vector2f direction = diff / distance;
+
+                    // Calculate overlap
+                    float overlap = minDistance - distance;
+
+                    // Push waffles apart
+                    // If one is selected and moving, let it push harder
+                    bool iMoving = waffles[i].isSelected;
+                    bool jMoving = waffles[j].isSelected;
+
+                    if (iMoving && !jMoving) {
+                        // i is selected, push j more
+                        waffles[j].pos += direction * overlap * 0.8f;
+                        waffles[i].pos -= direction * overlap * 0.2f;
+                    }
+                    else if (jMoving && !iMoving) {
+                        // j is selected, push i more
+                        waffles[i].pos -= direction * overlap * 0.8f;
+                        waffles[j].pos += direction * overlap * 0.2f;
+                    }
+                    else {
+                        // Both or neither selected, push equally
+                        sf::Vector2f correction = direction * (overlap / 2.f);
+                        waffles[i].pos -= correction;
+                        waffles[j].pos += correction;
+                    }
+                }
+            }
+        }
+    }
+}
+
 int main()
 {
     sf::RenderWindow window(sf::VideoMode({ 1920, 1080 }), "SFML Window");
@@ -20,7 +64,7 @@ int main()
     sf::View camera(sf::FloatRect({ 0.f, 0.f }, { 1920.f, 1080.f }));
     window.setView(camera);
 
-    float cameraSpeed = 500.f;
+    float cameraSpeed = 1000.f;
     float zoomLevel = 1.f;
     const float zoomSpeed = 0.1f;
     const float minZoom = 0.1f;
@@ -32,16 +76,17 @@ int main()
         return -1;
     }
 
-    // Create multiple waffles
+    // Create multiple waffles with spacing to avoid initial overlap
     std::vector<Waffle> waffles;
     waffles.emplace_back(sf::Vector2f(0.f, 0.f));
-    waffles.emplace_back(sf::Vector2f(200.f, 0.f));
-    waffles.emplace_back(sf::Vector2f(-200.f, 0.f));
-    waffles.emplace_back(sf::Vector2f(0.f, 200.f));
-    waffles.emplace_back(sf::Vector2f(0.f, -200.f));
+    waffles.emplace_back(sf::Vector2f(250.f, 0.f));
+    waffles.emplace_back(sf::Vector2f(-250.f, 0.f));
+    waffles.emplace_back(sf::Vector2f(0.f, 250.f));
+    waffles.emplace_back(sf::Vector2f(0.f, -250.f));
 
     const float speed = 1000.f;
-    const float waffleRadius = 50.f; // Collision radius for selection
+    const float selectionRadius = 50.f; // Radius for clicking to select
+    const float collisionRadius = 57.f; // Actual collision radius (smaller than visual circle)
 
     // Selection state
     bool isDragging = false;
@@ -102,7 +147,7 @@ int main()
                             float dx = w.pos.x - dragStart.x;
                             float dy = w.pos.y - dragStart.y;
                             float dist = std::sqrt(dx * dx + dy * dy);
-                            if (dist <= waffleRadius) {
+                            if (dist <= selectionRadius) {
                                 w.isSelected = !w.isSelected;
                                 break; // Only select one waffle on click
                             }
@@ -178,6 +223,8 @@ int main()
             }
         }
 
+        resolveCollisions(waffles, collisionRadius);
+
         // Clear with green
         window.clear(sf::Color::Green);
 
@@ -229,12 +276,12 @@ int main()
                     sf::Vertex(w.pos, sf::Color::Blue),
                     sf::Vertex(w.targetPos, sf::Color::Blue)
                 };
-                window.draw(line, 2, sf::PrimitiveType::Lines);
+                window.draw(line, 10, sf::PrimitiveType::Lines);
             }
 
             // Draw waffle sprite
             sf::Sprite waffleSprite(waffleTexture);
-            waffleSprite.setScale(sf::Vector2f(0.035f, 0.035f));
+            waffleSprite.setScale(sf::Vector2f(0.25f, 0.25f));
             sf::FloatRect bounds = waffleSprite.getLocalBounds();
             waffleSprite.setOrigin(bounds.size / 2.f);
             waffleSprite.setPosition(w.pos);
@@ -242,8 +289,8 @@ int main()
 
             // Draw selection circle if selected
             if (w.isSelected) {
-                sf::CircleShape selectionCircle(waffleRadius);
-                selectionCircle.setOrigin(sf::Vector2(waffleRadius, waffleRadius));
+                sf::CircleShape selectionCircle(selectionRadius);
+                selectionCircle.setOrigin(sf::Vector2(selectionRadius, selectionRadius));
                 selectionCircle.setPosition(w.pos);
                 selectionCircle.setFillColor(sf::Color::Transparent);
                 selectionCircle.setOutlineColor(sf::Color::Yellow);
