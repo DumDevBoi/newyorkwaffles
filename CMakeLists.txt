@@ -25,9 +25,7 @@ FetchContent_MakeAvailable(SFML)
 add_executable (SFMLtest 
     "main.cpp" 
     "include.h" 
-    "GameObject.h"
-    
- "Component.h")
+)
 
 target_link_libraries(SFMLtest PRIVATE sfml-graphics sfml-window sfml-system)
 
@@ -43,5 +41,14 @@ if(WIN32)
         COMMENT "Copying SFML DLLs to output directory"
     )
 endif()
+
+add_custom_command(
+    TARGET SFMLtest
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/waffle.png
+        $<TARGET_FILE_DIR:SFMLtest>/waffle.png
+    COMMENT "waffle.png"
+)
 
 

@@ -2,21 +2,28 @@
 //
 
 #include "include.h"
-#include "GameObject.h"
-#include "Component.h"
 
 int main() 
 {
     sf::RenderWindow window(sf::VideoMode({ 1920, 1080 }), "SFML Window");
     window.setFramerateLimit(60);
 
-    //Test 
-    GameObject unit;
-    auto move = unit.addComponent<MovementComponent>(670.f);
-    unit.addComponent<RenderComponent>("waffle.png"); 
-    unit.x = 500;
-    unit.y = 500;
-    //Test 
+    sf::Texture waffleTexture;
+    if (!waffleTexture.loadFromFile("waffle.png")) {
+        return -1; 
+    }
+    sf::Sprite waffleSprite(waffleTexture);
+    waffleSprite.setScale(sf::Vector2(0.1f, 0.1f));
+
+    sf::FloatRect bounds = waffleSprite.getLocalBounds();
+    waffleSprite.setOrigin(bounds.size / 2.f);
+
+
+    sf::Vector2f wafflePos(400.f, 300.f);
+    sf::Vector2f targetPos = wafflePos;
+
+    const float speed = 200.f;
+
 
     sf::Clock clock;
     while (window.isOpen())
@@ -26,17 +33,38 @@ int main()
         {
             if (event->is<sf::Event::Closed>())
                 window.close();
-            //test
-            if (auto m = event->getIf<sf::Event::MouseButtonPressed>()) {
-                if (m->button == sf::Mouse::Button::Left) {
-                    move->target = (sf::Vector2f)sf::Mouse::getPosition(window);
+
+            if (const auto* mouseButton = event->getIf<sf::Event::MouseButtonPressed>()) {
+                if (mouseButton->button == sf::Mouse::Button::Right) {
+                    targetPos = sf::Vector2f(mouseButton->position);
                 }
             }
-            //test
+
+
         }
 
+        sf::Vector2f direction = targetPos - wafflePos;
+        float distance = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+
+        if (distance > 1.f) {
+            direction /= distance; 
+            sf::Vector2f movement = direction * speed * deltaTime;
+
+
+            if (std::sqrt(movement.x * movement.x + movement.y * movement.y) > distance) {
+                wafflePos = targetPos;
+            }
+            else {
+                wafflePos += movement;
+            }
+        }
+
+        waffleSprite.setPosition(wafflePos);
+
         window.clear(sf::Color::Green);
-        unit.draw(window);
+
+        window.draw(waffleSprite);
+        
         window.display();
     }
 
