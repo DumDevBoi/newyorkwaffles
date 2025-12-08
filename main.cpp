@@ -9,6 +9,8 @@ struct Waffle {
     sf::Vector2f pos;
     sf::Vector2f targetPos;
     bool isSelected = false;
+    std::vector<sf::Vector2f> path; // world positions of path nodes (cell centers)
+    size_t pathIndex = 0;           // next node to move toward
 
     Waffle(sf::Vector2f position) : pos(position), targetPos(position) {}
 };
@@ -26,8 +28,151 @@ bool isWall(int gx, int gy) {
     return ((n ^ (n >> 16)) & 100) < 25;
 }
 
+struct ANode {
+    int gx, gy;
+    float g = 0.f;
+    float h = 0.f;
+    float f() const { return g + h; }
+    std::pair<int, int> parent = { INT_MIN, INT_MIN };
+};
+
+static inline float heuristic(int ax, int ay, int bx, int by) {
+    // use Manhattan or Euclidean; Euclidean provides smoother cost
+    float dx = float(ax - bx);
+    float dy = float(ay - by);
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+static inline sf::Vector2f gridToWorldCenter(int gx, int gy) {
+    // center of cell
+    return sf::Vector2f(gx * gridSize + gridSize * 0.5f, gy * gridSize + gridSize * 0.5f);
+}
+
+static inline std::vector<std::pair<int, int>> getNeighbors(int gx, int gy) {
+    // 8-connected (diagonals allowed) — adjust if you want 4-connected
+    std::vector<std::pair<int, int>> n;
+    for (int dx = -1; dx <= 1; ++dx) {
+        for (int dy = -1; dy <= 1; ++dy) {
+            if (dx == 0 && dy == 0) continue;
+            n.emplace_back(gx + dx, gy + dy);
+        }
+    }
+    return n;
+}
+
+static inline long long hashKey(int gx, int gy) {
+    return (static_cast<long long>(gx) << 32) ^ static_cast<unsigned long long>(gy);
+}
+
+std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf::Vector2f& goalWorld) {
+    // Convert to grid coords
+    int startGx = static_cast<int>(std::floor(startWorld.x / gridSize));
+    int startGy = static_cast<int>(std::floor(startWorld.y / gridSize));
+    int goalGx = static_cast<int>(std::floor(goalWorld.x / gridSize));
+    int goalGy = static_cast<int>(std::floor(goalWorld.y / gridSize));
+
+    // If goal is a wall, try to pick a nearby non-wall target (search up to radius 2)
+    if (isWall(goalGx, goalGy)) {
+        bool found = false;
+        for (int r = 1; r <= 3 && !found; ++r) {
+            for (int dx = -r; dx <= r && !found; ++dx) {
+                for (int dy = -r; dy <= r && !found; ++dy) {
+                    int gx = goalGx + dx;
+                    int gy = goalGy + dy;
+                    if (!isWall(gx, gy)) {
+                        goalGx = gx;
+                        goalGy = gy;
+                        found = true;
+                    }
+                }
+            }
+        }
+        if (!found) {
+            // no reachable goal found nearby
+            return {};
+        }
+    }
+
+    // Open set: priority queue keyed on f = g + h
+    struct PQItem {
+        int gx, gy;
+        float f;
+        float g;
+        bool operator<(PQItem const& o) const { return f > o.f; } // reversed for min-heap
+    };
+    std::priority_queue<PQItem> openPQ;
+
+    // Maps for nodes
+    std::unordered_map<long long, ANode> nodes;
+
+
+    ANode startNode;
+    startNode.g = 0.f;
+    startNode.h = heuristic(startGx, startGy, goalGx, goalGy);
+    startNode.parent = { INT_MIN, INT_MIN };
+    nodes[hashKey(startGx, startGy)] = startNode;
+
+    openPQ.push({ startGx, startGy, startNode.f(), startNode.g });
+
+    std::unordered_set<long long> closed;
+
+    const int maxIterations = 20000;
+    int iter = 0;
+
+    while (!openPQ.empty() && iter++ < maxIterations) {
+        auto top = openPQ.top(); openPQ.pop();
+        int cx = top.gx;
+        int cy = top.gy;
+        long long ckey = hashKey(cx, cy);
+        if (closed.find(ckey) != closed.end()) continue;
+        closed.insert(ckey);
+
+        // reached goal?
+        if (cx == goalGx && cy == goalGy) {
+            // reconstruct path
+            std::vector<sf::Vector2f> path;
+            std::pair<int, int> cur = { cx, cy };
+            while (!(cur.first == INT_MIN && cur.second == INT_MIN)) {
+                path.push_back(gridToWorldCenter(cur.first, cur.second));
+                long long curk = hashKey(cur.first, cur.second);
+                auto it = nodes.find(curk);
+                if (it == nodes.end()) break;
+                cur = it->second.parent;
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+
+        // neighbors
+        for (auto nb : getNeighbors(cx, cy)) {
+            int ngx = nb.first;
+            int ngy = nb.second;
+            long long nbk = hashKey(ngx, ngy);
+
+            if (closed.find(nbk) != closed.end()) continue;
+            if (isWall(ngx, ngy)) continue; // ignore walls
+
+            float moveCost = heuristic(cx, cy, ngx, ngy); // diagonal cost ~= 1.414, straight 1
+            float tentativeG = nodes[ckey].g + moveCost;
+
+            auto it = nodes.find(nbk);
+            if (it == nodes.end() || tentativeG < it->second.g) {
+                ANode neighbor;
+                neighbor.g = tentativeG;
+                neighbor.h = heuristic(ngx, ngy, goalGx, goalGy);
+                neighbor.parent = { cx, cy };
+                nodes[nbk] = neighbor;
+                openPQ.push({ ngx, ngy, neighbor.f(), neighbor.g });
+            }
+        }
+    }
+
+    // failed to find path
+    return {};
+}
+
 void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
-    const int iterations = 5;
+    const int iterations = 5; 
 
     for (int iter = 0; iter < iterations; ++iter) {
         for (size_t i = 0; i < waffles.size(); ++i) {
@@ -38,7 +183,7 @@ void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
 
                 if (distance < minDistance && distance > 0.01f) {
                     // Normalize direction
-                    sf::Vector2f direction = diff / distance;
+                    sf::Vector2f direction(diff.x / distance, diff.y / distance);
 
                     // Calculate overlap
                     float overlap = minDistance - distance;
@@ -104,7 +249,7 @@ void wallCollisions(std::vector<Waffle>& waffles) {
 
                         // Prevent division by zero
                         if (distance > 0.001f) {
-                            sf::Vector2f direction = diff / distance;
+                            sf::Vector2f direction(diff.x / distance, diff.y / distance);
                             float overlap = collisionRadius - distance;
 
                             // Hard push out of the wall
@@ -223,7 +368,20 @@ int main()
                     sf::Vector2f clickPos = window.mapPixelToCoords(mouseButton->position);
                     for (auto& w : waffles) {
                         if (w.isSelected) {
-                            w.targetPos = clickPos;
+                            // compute path from waffle current pos to clicked cell
+                            std::vector<sf::Vector2f> path = findPathAstar(w.pos, clickPos);
+                            if (!path.empty()) {
+                                w.path = std::move(path);
+                                w.pathIndex = 0;
+                                // set next target pos to first node in path
+                                w.targetPos = w.path[w.pathIndex];
+                            }
+                            else {
+                                // fallback: direct move if no path found
+                                w.path.clear();
+                                w.pathIndex = 0;
+                                w.targetPos = clickPos;
+                            }
                         }
                     }
                 }
@@ -261,15 +419,42 @@ int main()
 
         // Update all waffles
         for (auto& w : waffles) {
+            // If following a path, ensure targetPos is the current node
+            if (!w.path.empty()) {
+                // clamp pathIndex
+                if (w.pathIndex >= w.path.size()) {
+                    // finished path
+                    w.path.clear();
+                    w.pathIndex = 0;
+                    // leave targetPos as is
+                }
+                else {
+                    w.targetPos = w.path[w.pathIndex];
+                }
+            }
+
             sf::Vector2f direction = w.targetPos - w.pos;
             float distance = std::sqrt(direction.x * direction.x + direction.y * direction.y);
 
             if (distance > 1.f) {
-                direction /= distance;
+                direction = sf::Vector2f(direction.x / distance, direction.y / distance);
                 sf::Vector2f movement = direction * speed * deltaTime;
 
-                if (std::sqrt(movement.x * movement.x + movement.y * movement.y) > distance) {
+                if (std::sqrt(movement.x * movement.x + movement.y * movement.y) >= distance) {
                     w.pos = w.targetPos;
+                    // if we just reached a path node, advance index
+                    if (!w.path.empty() && w.pathIndex < w.path.size()) {
+                        // arrived at node -> advance
+                        w.pathIndex++;
+                        if (w.pathIndex < w.path.size()) {
+                            w.targetPos = w.path[w.pathIndex];
+                        }
+                        else {
+                            // finished path; clear it
+                            w.path.clear();
+                            w.pathIndex = 0;
+                        }
+                    }
                 }
                 else {
                     w.pos += movement;
@@ -278,7 +463,7 @@ int main()
         }
 
         waffleCollisions(waffles, collisionRadius);
-        wallCollisions(waffles);
+		wallCollisions(waffles);
 
         window.clear(sf::Color::Green);
 
