@@ -1,7 +1,9 @@
-﻿// SFMLtest.cpp : Defines the entry point for the application.
-//
+﻿#include "include.h"
 
-#include "include.h"
+const float speed = 1000.f;
+const float selectionRadius = 50.f;
+const float collisionRadius = 57.f;
+const float gridSize = 100.f;
 
 struct Waffle {
     sf::Vector2f pos;
@@ -11,8 +13,21 @@ struct Waffle {
     Waffle(sf::Vector2f position) : pos(position), targetPos(position) {}
 };
 
-void resolveCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
-    const int iterations = 5; // Multiple passes for better stability
+bool isWall(int gx, int gy) {
+    // Don't spawn walls ard (0,0) 
+    if (std::abs(gx) <= 2 && std::abs(gy) <= 2) return false;
+
+    // bit-shift grid coord, create unique 'seed' for every cell
+    long long n = (long long)gx * 374761393 + (long long)gy * 668265263;
+    n = (n ^ (n >> 13)) * 1274126177;
+
+    // Returns true if the noise value is below a certain %
+    // This creates a 25% chance of a block appearing
+    return ((n ^ (n >> 16)) & 100) < 25;
+}
+
+void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
+    const int iterations = 5;
 
     for (int iter = 0; iter < iterations; ++iter) {
         for (size_t i = 0; i < waffles.size(); ++i) {
@@ -55,6 +70,53 @@ void resolveCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
     }
 }
 
+void wallCollisions(std::vector<Waffle>& waffles) {
+    for (auto& w : waffles) {
+        // Find which grid cell the waffle is currently in
+        int centerGx = static_cast<int>(std::floor(w.pos.x / gridSize));
+        int centerGy = static_cast<int>(std::floor(w.pos.y / gridSize));
+
+        // Check the 3x3 surrounding grid cells for walls
+        for (int x = -1; x <= 1; ++x) {
+            for (int y = -1; y <= 1; ++y) {
+                int targetGx = centerGx + x;
+                int targetGy = centerGy + y;
+
+                // If this cell is a wall (black box)
+                if (isWall(targetGx, targetGy)) {
+                    // Calculate World Position of the Wall Center
+                    float wallX = targetGx * gridSize;
+                    float wallY = targetGy * gridSize;
+
+                    // AABB vs Circle Collision
+                    // Find closest point on the square to the circle center
+                    float closestX = std::max(wallX, std::min(w.pos.x, wallX + gridSize));
+                    float closestY = std::max(wallY, std::min(w.pos.y, wallY + gridSize));
+
+                    sf::Vector2f closestPoint(closestX, closestY);
+                    sf::Vector2f diff = w.pos - closestPoint;
+
+                    float distanceSq = diff.x * diff.x + diff.y * diff.y;
+
+                    // If overlap exists (distance < radius)
+                    if (distanceSq < collisionRadius * collisionRadius) {
+                        float distance = std::sqrt(distanceSq);
+
+                        // Prevent division by zero
+                        if (distance > 0.001f) {
+                            sf::Vector2f direction = diff / distance;
+                            float overlap = collisionRadius - distance;
+
+                            // Hard push out of the wall
+                            w.pos += direction * overlap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 int main()
 {
     sf::RenderWindow window(sf::VideoMode({ 1920, 1080 }), "SFML Window");
@@ -70,7 +132,6 @@ int main()
     const float minZoom = 0.1f;
     const float maxZoom = 5.f;
 
-    // Waffle setup
     sf::Texture waffleTexture;
     if (!waffleTexture.loadFromFile("waffle.png")) {
         return -1;
@@ -84,10 +145,6 @@ int main()
     waffles.emplace_back(sf::Vector2f(0.f, 250.f));
     waffles.emplace_back(sf::Vector2f(0.f, -250.f));
 
-    const float speed = 1000.f;
-    const float selectionRadius = 50.f; // Radius for clicking to select
-    const float collisionRadius = 57.f; // Actual collision radius (smaller than visual circle)
-
     // Selection state
     bool isDragging = false;
     sf::Vector2f dragStart;
@@ -95,9 +152,6 @@ int main()
     selectionBox.setFillColor(sf::Color(100, 100, 255, 50));
     selectionBox.setOutlineColor(sf::Color::Blue);
     selectionBox.setOutlineThickness(2.f);
-
-    // Grid setup for infinite plane
-    const float gridSize = 100.f;
 
     sf::Clock clock;
 
@@ -223,37 +277,41 @@ int main()
             }
         }
 
-        resolveCollisions(waffles, collisionRadius);
+        waffleCollisions(waffles, collisionRadius);
+        wallCollisions(waffles);
 
-        // Clear with green
         window.clear(sf::Color::Green);
 
-        // Draw infinite grid
         sf::Vector2f cameraCenter = camera.getCenter();
         sf::Vector2f cameraSize = camera.getSize();
 
-        float left = cameraCenter.x - cameraSize.x / 2.f;
-        float right = cameraCenter.x + cameraSize.x / 2.f;
-        float top = cameraCenter.y - cameraSize.y / 2.f;
-        float bottom = cameraCenter.y + cameraSize.y / 2.f;
+        // Calculate which grid cells are visible on screen
+        int startGx = static_cast<int>(std::floor((cameraCenter.x - cameraSize.x / 2.f) / gridSize));
+        int endGx = static_cast<int>(std::ceil((cameraCenter.x + cameraSize.x / 2.f) / gridSize));
+        int startGy = static_cast<int>(std::floor((cameraCenter.y - cameraSize.y / 2.f) / gridSize));
+        int endGy = static_cast<int>(std::ceil((cameraCenter.y + cameraSize.y / 2.f) / gridSize));
 
-        sf::RectangleShape gridLine;
-        gridLine.setFillColor(sf::Color(0, 150, 0));
+        sf::RectangleShape cellShape;
+        cellShape.setSize({ gridSize, gridSize });
 
-        // Vertical lines
-        float startX = std::floor(left / gridSize) * gridSize;
-        for (float x = startX; x <= right; x += gridSize) {
-            gridLine.setSize(sf::Vector2f(2.f * zoomLevel, cameraSize.y));
-            gridLine.setPosition(sf::Vector2(x, top));
-            window.draw(gridLine);
-        }
+        for (int x = startGx; x < endGx; ++x) {
+            for (int y = startGy; y < endGy; ++y) {
+                cellShape.setPosition(sf::Vector2(x * gridSize, y * gridSize));
 
-        // Horizontal lines
-        float startY = std::floor(top / gridSize) * gridSize;
-        for (float y = startY; y <= bottom; y += gridSize) {
-            gridLine.setSize(sf::Vector2f(cameraSize.x, 2.f * zoomLevel));
-            gridLine.setPosition(sf::Vector2(left, y));
-            window.draw(gridLine);
+                if (isWall(x, y)) {
+                    // Draw Black Wall
+                    cellShape.setFillColor(sf::Color::Black);
+                    cellShape.setOutlineThickness(0);
+                    window.draw(cellShape);
+                }
+                else {
+                    // Draw Empty Green Grid Cell
+                    cellShape.setFillColor(sf::Color::Transparent);
+                    cellShape.setOutlineColor(sf::Color(0, 150, 0));
+                    cellShape.setOutlineThickness(-2.f * zoomLevel);
+                    window.draw(cellShape);
+                }
+            }
         }
 
         // Draw selection box while dragging
@@ -270,11 +328,11 @@ int main()
 
         // Draw waffles and lines
         for (const auto& w : waffles) {
-            // Draw blue line if selected and moving
+            // Draw red line if selected and moving
             if (w.isSelected) {
                 sf::Vertex line[] = {
-                    sf::Vertex(w.pos, sf::Color::Blue),
-                    sf::Vertex(w.targetPos, sf::Color::Blue)
+                    sf::Vertex(w.pos, sf::Color::Red),
+                    sf::Vertex(w.targetPos, sf::Color::Red)
                 };
                 window.draw(line, 10, sf::PrimitiveType::Lines);
             }
@@ -293,8 +351,8 @@ int main()
                 selectionCircle.setOrigin(sf::Vector2(selectionRadius, selectionRadius));
                 selectionCircle.setPosition(w.pos);
                 selectionCircle.setFillColor(sf::Color::Transparent);
-                selectionCircle.setOutlineColor(sf::Color::Yellow);
-                selectionCircle.setOutlineThickness(3.f * zoomLevel);
+                selectionCircle.setOutlineColor(sf::Color::Blue);
+                selectionCircle.setOutlineThickness(5.f * zoomLevel);
                 window.draw(selectionCircle);
             }
         }

@@ -10,5 +10,8 @@
 #include <cmath>
 #include <SFML/Graphics.hpp>
 #include <optional>
+#include <algorithm>
+#include <queue>
+#include <unordered_set>
 
 // TODO: Reference additional headers your program requires here.
