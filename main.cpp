@@ -24,8 +24,8 @@ bool isWall(int gx, int gy) {
     n = (n ^ (n >> 13)) * 1274126177;
 
     // Returns true if the noise value is below a certain %
-    // This creates a 25% chance of a block appearing
-    return ((n ^ (n >> 16)) & 100) < 25;
+    // This creates a 5% chance of a block appearing
+    return ((n ^ (n >> 16)) & 100) < 5;
 }
 
 struct ANode {
@@ -150,7 +150,18 @@ std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf
             long long nbk = hashKey(ngx, ngy);
 
             if (closed.find(nbk) != closed.end()) continue;
-            if (isWall(ngx, ngy)) continue; // ignore walls
+
+            int dx = ngx - cx;
+            int dy = ngy - cy;
+
+            // block diagonal corner cutting
+            if (dx != 0 && dy != 0) {
+                if (isWall(cx + dx, cy) || isWall(cx, cy + dy)) {
+                    continue;
+                }
+            }
+
+            if (isWall(ngx, ngy)) continue;
 
             float moveCost = heuristic(cx, cy, ngx, ngy); // diagonal cost ~= 1.414, straight 1
             float tentativeG = nodes[ckey].g + moveCost;
