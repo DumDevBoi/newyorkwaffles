@@ -9,35 +9,29 @@ struct Waffle {
     sf::Vector2f pos;
     sf::Vector2f targetPos;
     bool isSelected = false;
-    std::vector<sf::Vector2f> path; // world positions of path nodes (cell centers)
-    size_t pathIndex = 0;           // next node to move toward
-
+    std::deque<sf::Vector2f> path; // world positions of path nodes (cell centers)
     Waffle(sf::Vector2f position) : pos(position), targetPos(position) {}
 };
 
-bool isWall(int gx, int gy) {
-    // Don't spawn walls ard (0,0) 
-    if (std::abs(gx) <= 2 && std::abs(gy) <= 2) return false;
-
+inline bool isWall(int gx, int gy) {
     // bit-shift grid coord, create unique 'seed' for every cell
     long long n = (long long)gx * 374761393 + (long long)gy * 668265263;
     n = (n ^ (n >> 13)) * 1274126177;
 
-    // Returns true if the noise value is below a certain %
-    // This creates a 5% chance of a block appearing
-    return ((n ^ (n >> 16)) & 100) < 5;
+    // 1% chance of a block appearing
+    return ((n ^ (n >> 16)) & 100) < 1;
 }
 
-struct ANode {
+struct Node {
     int gx, gy;
     float g = 0.f;
     float h = 0.f;
     float f() const { return g + h; }
-    std::pair<int, int> parent = { INT_MIN, INT_MIN };
+    std::pair<int, int> parent = { INT_MIN, INT_MIN }; //coords 
 };
 
 static inline float heuristic(int ax, int ay, int bx, int by) {
-    // use Manhattan or Euclidean; Euclidean provides smoother cost
+    // Euclidean
     float dx = float(ax - bx);
     float dy = float(ay - by);
     return std::sqrt(dx * dx + dy * dy);
@@ -49,7 +43,7 @@ static inline sf::Vector2f gridToWorldCenter(int gx, int gy) {
 }
 
 static inline std::vector<std::pair<int, int>> getNeighbors(int gx, int gy) {
-    // 8-connected (diagonals allowed) — adjust if you want 4-connected
+    // diagonals allowed
     std::vector<std::pair<int, int>> n;
     for (int dx = -1; dx <= 1; ++dx) {
         for (int dy = -1; dy <= 1; ++dy) {
@@ -64,14 +58,14 @@ static inline long long hashKey(int gx, int gy) {
     return (static_cast<long long>(gx) << 32) ^ static_cast<unsigned long long>(gy);
 }
 
-std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf::Vector2f& goalWorld) {
+std::deque<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf::Vector2f& goalWorld) {
     // Convert to grid coords
     int startGx = static_cast<int>(std::floor(startWorld.x / gridSize));
     int startGy = static_cast<int>(std::floor(startWorld.y / gridSize));
     int goalGx = static_cast<int>(std::floor(goalWorld.x / gridSize));
     int goalGy = static_cast<int>(std::floor(goalWorld.y / gridSize));
 
-    // If goal is a wall, try to pick a nearby non-wall target (search up to radius 2)
+    // If goal = wall, pick nearby non-wall (within radius 3)
     if (isWall(goalGx, goalGy)) {
         bool found = false;
         for (int r = 1; r <= 3 && !found; ++r) {
@@ -88,7 +82,6 @@ std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf
             }
         }
         if (!found) {
-            // no reachable goal found nearby
             return {};
         }
     }
@@ -98,15 +91,13 @@ std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf
         int gx, gy;
         float f;
         float g;
-        bool operator<(PQItem const& o) const { return f > o.f; } // reversed for min-heap
+        bool operator<(PQItem const& o) const { return f > o.f; } // min-heap
     };
     std::priority_queue<PQItem> openPQ;
 
-    // Maps for nodes
-    std::unordered_map<long long, ANode> nodes;
+    std::unordered_map<long long, Node> nodes;
 
-
-    ANode startNode;
+    Node startNode;
     startNode.g = 0.f;
     startNode.h = heuristic(startGx, startGy, goalGx, goalGy);
     startNode.parent = { INT_MIN, INT_MIN };
@@ -116,30 +107,25 @@ std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf
 
     std::unordered_set<long long> closed;
 
-    const int maxIterations = 20000;
-    int iter = 0;
-
-    while (!openPQ.empty() && iter++ < maxIterations) {
-        auto top = openPQ.top(); openPQ.pop();
+    while (!openPQ.empty()) {
+        auto top = openPQ.top(); 
+        openPQ.pop();
         int cx = top.gx;
         int cy = top.gy;
         long long ckey = hashKey(cx, cy);
         if (closed.find(ckey) != closed.end()) continue;
         closed.insert(ckey);
 
-        // reached goal?
         if (cx == goalGx && cy == goalGy) {
-            // reconstruct path
-            std::vector<sf::Vector2f> path;
+            std::deque<sf::Vector2f> path;
             std::pair<int, int> cur = { cx, cy };
             while (!(cur.first == INT_MIN && cur.second == INT_MIN)) {
-                path.push_back(gridToWorldCenter(cur.first, cur.second));
+                path.push_front(gridToWorldCenter(cur.first, cur.second));
                 long long curk = hashKey(cur.first, cur.second);
                 auto it = nodes.find(curk);
                 if (it == nodes.end()) break;
                 cur = it->second.parent;
             }
-            std::reverse(path.begin(), path.end());
             return path;
         }
 
@@ -168,7 +154,7 @@ std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf
 
             auto it = nodes.find(nbk);
             if (it == nodes.end() || tentativeG < it->second.g) {
-                ANode neighbor;
+                Node neighbor;
                 neighbor.g = tentativeG;
                 neighbor.h = heuristic(ngx, ngy, goalGx, goalGy);
                 neighbor.parent = { cx, cy };
@@ -177,7 +163,6 @@ std::vector<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf
             }
         }
     }
-
     // failed to find path
     return {};
 }
@@ -193,29 +178,23 @@ void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
                 float minDistance = waffleRadius * 2.f;
 
                 if (distance < minDistance && distance > 0.01f) {
-                    // Normalize direction
                     sf::Vector2f direction(diff.x / distance, diff.y / distance);
 
-                    // Calculate overlap
                     float overlap = minDistance - distance;
 
-                    // Push waffles apart
-                    // If one is selected and moving, let it push harder
+                    // If selected + moving, pushes harder
                     bool iMoving = waffles[i].isSelected;
                     bool jMoving = waffles[j].isSelected;
 
                     if (iMoving && !jMoving) {
-                        // i is selected, push j more
                         waffles[j].pos += direction * overlap * 0.8f;
                         waffles[i].pos -= direction * overlap * 0.2f;
                     }
                     else if (jMoving && !iMoving) {
-                        // j is selected, push i more
                         waffles[i].pos -= direction * overlap * 0.8f;
                         waffles[j].pos += direction * overlap * 0.2f;
                     }
                     else {
-                        // Both or neither selected, push equally
                         sf::Vector2f correction = direction * (overlap / 2.f);
                         waffles[i].pos -= correction;
                         waffles[j].pos += correction;
@@ -228,24 +207,21 @@ void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
 
 void wallCollisions(std::vector<Waffle>& waffles) {
     for (auto& w : waffles) {
-        // Find which grid cell the waffle is currently in
+        // find current grid cell 
         int centerGx = static_cast<int>(std::floor(w.pos.x / gridSize));
         int centerGy = static_cast<int>(std::floor(w.pos.y / gridSize));
 
-        // Check the 3x3 surrounding grid cells for walls
+        // Check surrounding 3x3 for walls
         for (int x = -1; x <= 1; ++x) {
             for (int y = -1; y <= 1; ++y) {
                 int targetGx = centerGx + x;
                 int targetGy = centerGy + y;
 
-                // If this cell is a wall (black box)
                 if (isWall(targetGx, targetGy)) {
-                    // Calculate World Position of the Wall Center
                     float wallX = targetGx * gridSize;
                     float wallY = targetGy * gridSize;
 
-                    // AABB vs Circle Collision
-                    // Find closest point on the square to the circle center
+                    // closest point on the square to the circle center
                     float closestX = std::max(wallX, std::min(w.pos.x, wallX + gridSize));
                     float closestY = std::max(wallY, std::min(w.pos.y, wallY + gridSize));
 
@@ -254,17 +230,16 @@ void wallCollisions(std::vector<Waffle>& waffles) {
 
                     float distanceSq = diff.x * diff.x + diff.y * diff.y;
 
-                    // If overlap exists (distance < radius)
                     if (distanceSq < collisionRadius * collisionRadius) {
                         float distance = std::sqrt(distanceSq);
 
                         // Prevent division by zero
-                        if (distance > 0.001f) {
+                        if (distance > 0.00001f) {
                             sf::Vector2f direction(diff.x / distance, diff.y / distance);
                             float overlap = collisionRadius - distance;
 
                             // Hard push out of the wall
-                            w.pos += direction * overlap;
+                            w.pos += 1.5f * direction * overlap;
                         }
                     }
                 }
@@ -278,7 +253,6 @@ int main()
     sf::RenderWindow window(sf::VideoMode({ 1920, 1080 }), "SFML Window");
     window.setFramerateLimit(60);
 
-    // Camera setup
     sf::View camera(sf::FloatRect({ 0.f, 0.f }, { 1920.f, 1080.f }));
     window.setView(camera);
 
@@ -293,13 +267,18 @@ int main()
         return -1;
     }
 
-    // Create multiple waffles with spacing to avoid initial overlap
     std::vector<Waffle> waffles;
     waffles.emplace_back(sf::Vector2f(0.f, 0.f));
     waffles.emplace_back(sf::Vector2f(250.f, 0.f));
     waffles.emplace_back(sf::Vector2f(-250.f, 0.f));
     waffles.emplace_back(sf::Vector2f(0.f, 250.f));
     waffles.emplace_back(sf::Vector2f(0.f, -250.f));
+    waffles.emplace_back(sf::Vector2f(0.f, 0.f));
+    waffles.emplace_back(sf::Vector2f(250.f, 0.f));
+    waffles.emplace_back(sf::Vector2f(-250.f, 0.f));
+    waffles.emplace_back(sf::Vector2f(0.f, 250.f));
+    waffles.emplace_back(sf::Vector2f(0.f, -250.f));
+    waffles.emplace_back(sf::Vector2f(0.f, 0.f));
 
     // Selection state
     bool isDragging = false;
@@ -350,10 +329,9 @@ int main()
                         }
                     }
 
-                    // Select waffles
                     for (auto& w : waffles) {
                         if (isClick) {
-                            // Click selection - check radius
+                            // Click selection
                             float dx = w.pos.x - dragStart.x;
                             float dy = w.pos.y - dragStart.y;
                             float dist = std::sqrt(dx * dx + dy * dy);
@@ -379,18 +357,12 @@ int main()
                     sf::Vector2f clickPos = window.mapPixelToCoords(mouseButton->position);
                     for (auto& w : waffles) {
                         if (w.isSelected) {
-                            // compute path from waffle current pos to clicked cell
-                            std::vector<sf::Vector2f> path = findPathAstar(w.pos, clickPos);
+                            std::deque<sf::Vector2f> path = findPathAstar(w.pos, clickPos);
                             if (!path.empty()) {
                                 w.path = std::move(path);
-                                w.pathIndex = 0;
-                                // set next target pos to first node in path
-                                w.targetPos = w.path[w.pathIndex];
+                                w.targetPos = w.path.front();
                             }
                             else {
-                                // fallback: direct move if no path found
-                                w.path.clear();
-                                w.pathIndex = 0;
                                 w.targetPos = clickPos;
                             }
                         }
@@ -414,7 +386,7 @@ int main()
             }
         }
 
-        // Camera movement with WASD
+        // Camera movement
         sf::Vector2f cameraMove(0.f, 0.f);
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W))
             cameraMove.y -= cameraSpeed * deltaTime * zoomLevel;
@@ -428,60 +400,56 @@ int main()
         camera.move(cameraMove);
         window.setView(camera);
 
-        // Update all waffles
         for (auto& w : waffles) {
-            // If following a path, ensure targetPos is the current node
             if (!w.path.empty()) {
-                // clamp pathIndex
-                if (w.pathIndex >= w.path.size()) {
-                    // finished path
-                    w.path.clear();
-                    w.pathIndex = 0;
-                    // leave targetPos as is
-                }
-                else {
-                    w.targetPos = w.path[w.pathIndex];
-                }
-            }
+                w.targetPos = w.path.front();
 
-            sf::Vector2f direction = w.targetPos - w.pos;
-            float distance = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+                sf::Vector2f direction = w.targetPos - w.pos;
+                float distance = std::sqrt(direction.x * direction.x + direction.y * direction.y);
 
-            if (distance > 1.f) {
-                direction = sf::Vector2f(direction.x / distance, direction.y / distance);
-                sf::Vector2f movement = direction * speed * deltaTime;
+                if (distance > 67.f) {
+                    direction = sf::Vector2f(direction.x / distance, direction.y / distance);
+                    sf::Vector2f movement = direction * speed * deltaTime;
 
-                if (std::sqrt(movement.x * movement.x + movement.y * movement.y) >= distance) {
-                    w.pos = w.targetPos;
-                    // if we just reached a path node, advance index
-                    if (!w.path.empty() && w.pathIndex < w.path.size()) {
-                        // arrived at node -> advance
-                        w.pathIndex++;
-                        if (w.pathIndex < w.path.size()) {
-                            w.targetPos = w.path[w.pathIndex];
-                        }
-                        else {
-                            // finished path; clear it
-                            w.path.clear();
-                            w.pathIndex = 0;
-                        }
+                    if (std::sqrt(movement.x * movement.x + movement.y * movement.y) >= distance) {
+                        w.pos = w.targetPos;
+                        w.path.pop_front();
+                    }
+                    else {
+                        w.pos += movement;
                     }
                 }
                 else {
-                    w.pos += movement;
+                    w.path.pop_front();
+                }
+            }
+            else {
+                sf::Vector2f direction = w.targetPos - w.pos;
+                float distance = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+
+                if (distance > 67.f) {
+                    direction = sf::Vector2f(direction.x / distance, direction.y / distance);
+                    sf::Vector2f movement = direction * speed * deltaTime;
+
+                    if (std::sqrt(movement.x * movement.x + movement.y * movement.y) >= distance) {
+                        w.pos = w.targetPos;
+                    }
+                    else {
+                        w.pos += movement;
+                    }
                 }
             }
         }
 
         waffleCollisions(waffles, collisionRadius);
-		wallCollisions(waffles);
+        wallCollisions(waffles);
 
         window.clear(sf::Color::Green);
 
         sf::Vector2f cameraCenter = camera.getCenter();
         sf::Vector2f cameraSize = camera.getSize();
 
-        // Calculate which grid cells are visible on screen
+        // Calc visible grid cells
         int startGx = static_cast<int>(std::floor((cameraCenter.x - cameraSize.x / 2.f) / gridSize));
         int endGx = static_cast<int>(std::ceil((cameraCenter.x + cameraSize.x / 2.f) / gridSize));
         int startGy = static_cast<int>(std::floor((cameraCenter.y - cameraSize.y / 2.f) / gridSize));
@@ -490,18 +458,17 @@ int main()
         sf::RectangleShape cellShape;
         cellShape.setSize({ gridSize, gridSize });
 
+        // Draw grid
         for (int x = startGx; x < endGx; ++x) {
             for (int y = startGy; y < endGy; ++y) {
                 cellShape.setPosition(sf::Vector2(x * gridSize, y * gridSize));
 
                 if (isWall(x, y)) {
-                    // Draw Black Wall
                     cellShape.setFillColor(sf::Color::Black);
                     cellShape.setOutlineThickness(0);
                     window.draw(cellShape);
                 }
                 else {
-                    // Draw Empty Green Grid Cell
                     cellShape.setFillColor(sf::Color::Transparent);
                     cellShape.setOutlineColor(sf::Color(0, 150, 0));
                     cellShape.setOutlineThickness(-2.f * zoomLevel);
@@ -522,18 +489,19 @@ int main()
             window.draw(selectionBox);
         }
 
-        // Draw waffles and lines
+        //Render loop 
         for (const auto& w : waffles) {
-            // Draw red line if selected and moving
-            if (w.isSelected) {
-                sf::Vertex line[] = {
-                    sf::Vertex(w.pos, sf::Color::Red),
-                    sf::Vertex(w.targetPos, sf::Color::Red)
-                };
-                window.draw(line, 10, sf::PrimitiveType::Lines);
+            // Draw A* path if exists
+            if (!w.path.empty()) {
+                for (size_t i = 0; i < w.path.size() - 1; ++i) {
+                    sf::Vertex line[] = {
+                        sf::Vertex(w.path[i], sf::Color::Red),
+                        sf::Vertex(w.path[i + 1], sf::Color::Red)
+                    };
+                    window.draw(line, 2, sf::PrimitiveType::Lines);
+                }
             }
 
-            // Draw waffle sprite
             sf::Sprite waffleSprite(waffleTexture);
             waffleSprite.setScale(sf::Vector2f(0.25f, 0.25f));
             sf::FloatRect bounds = waffleSprite.getLocalBounds();
@@ -541,7 +509,6 @@ int main()
             waffleSprite.setPosition(w.pos);
             window.draw(waffleSprite);
 
-            // Draw selection circle if selected
             if (w.isSelected) {
                 sf::CircleShape selectionCircle(selectionRadius);
                 selectionCircle.setOrigin(sf::Vector2(selectionRadius, selectionRadius));
@@ -552,7 +519,6 @@ int main()
                 window.draw(selectionCircle);
             }
         }
-
         window.display();
     }
 
