@@ -3,15 +3,79 @@
 const float speed = 1000.f;
 const float selectionRadius = 55.f;
 const float collisionRadius = 47.f;
-const float gridSize = 100.f;
+const float gridSize = 200.f;
 
 struct Waffle {
+    static size_t latestID;  // Shared
+    size_t id;             // Unique
+
     sf::Vector2f pos;
     sf::Vector2f targetPos;
     bool isSelected = false;
-    std::deque<sf::Vector2f> path; // world positions of path nodes (cell centers)
-    Waffle(sf::Vector2f position) : pos(position), targetPos(position) {}
+    std::deque<sf::Vector2f> path; // world positions of path nodes 
+    int gridX = 0;
+    int gridY = 0;
+    Waffle(sf::Vector2f position) : 
+        pos(position), 
+        targetPos(position), 
+        id(latestID++) 
+    {
+        gridX = static_cast<int>(std::floor(pos.x / gridSize));
+        gridY = static_cast<int>(std::floor(pos.y / gridSize));
+    }
 };
+
+size_t Waffle::latestID = 0;
+
+static inline long long hashKey(int gx, int gy) {
+    return (static_cast<long long>(gx) << 32) ^ static_cast<unsigned long long>(gy);
+}
+
+class EntityGrid {
+private:
+    std::unordered_map<long long, std::unordered_set<size_t>> wafflesInCell;
+    float cellSize;
+
+public:
+    EntityGrid(float size) : cellSize(size) {}
+
+    void addToCell(int gx, int gy, size_t waffleId) {
+        wafflesInCell[hashKey(gx, gy)].insert(waffleId);
+    }
+
+    void removeFromCell(int gx, int gy, size_t waffleId) {
+        auto key = hashKey(gx, gy);
+        auto it = wafflesInCell.find(key);
+        if (it != wafflesInCell.end()) {
+            it->second.erase(waffleId);
+            if (it->second.empty()) {
+                wafflesInCell.erase(it);
+            }
+        }
+    }
+
+    std::vector<size_t> getAdjacent(int gx, int gy) const {
+        std::vector<size_t> result;
+
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                auto it = wafflesInCell.find(hashKey(gx + dx, gy + dy));
+                if (it != wafflesInCell.end()) {
+                    result.insert(result.end(),
+                        it->second.begin(),
+                        it->second.end());
+                }
+            }
+        }
+        return result;
+    }
+
+    void clear() {
+        wafflesInCell.clear();
+    }
+};
+
+EntityGrid entityGrid(gridSize);
 
 inline bool isWall(int gx, int gy) {
     // bit-shift grid coord, create unique 'seed' for every cell
@@ -52,10 +116,6 @@ static inline std::vector<std::pair<int, int>> getNeighbors(int gx, int gy) {
         }
     }
     return n;
-}
-
-static inline long long hashKey(int gx, int gy) {
-    return (static_cast<long long>(gx) << 32) ^ static_cast<unsigned long long>(gy);
 }
 
 std::deque<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf::Vector2f& goalWorld) {
