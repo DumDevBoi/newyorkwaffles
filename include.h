@@ -1,7 +1,4 @@
-﻿// SFMLtest.h : Include file for standard system include files,
-// or project specific include files.
-
-#pragma once
+﻿#pragma once
 
 #include <iostream>
 #include <memory>
@@ -18,4 +15,7 @@
 #include <climits>
 #include <deque>
 
+#include <boost/thread.hpp>
+#include <boost/lockfree/queue.hpp>
+#include <atomic>
 // TODO: Reference additional headers your program requires here.
