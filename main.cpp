@@ -1,8 +1,8 @@
 ﻿#include "include.h"
 
 const float speed = 1000.f;
-const float selectionRadius = 50.f;
-const float collisionRadius = 57.f;
+const float selectionRadius = 55.f;
+const float collisionRadius = 47.f;
 const float gridSize = 100.f;
 
 struct Waffle {
@@ -167,38 +167,82 @@ std::deque<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf:
     return {};
 }
 
+bool wouldCollideWithWall(const sf::Vector2f& pos, float radius) {
+    int centerGx = static_cast<int>(std::floor(pos.x / gridSize));
+    int centerGy = static_cast<int>(std::floor(pos.y / gridSize));
+
+    // Check 3x3 surrounding grid cells
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            int targetGx = centerGx + x;
+            int targetGy = centerGy + y;
+
+            if (isWall(targetGx, targetGy)) {
+                float wallX = targetGx * gridSize;
+                float wallY = targetGy * gridSize;
+
+                float closestX = std::max(wallX, std::min(pos.x, wallX + gridSize));
+                float closestY = std::max(wallY, std::min(pos.y, wallY + gridSize));
+
+                sf::Vector2f closestPoint(closestX, closestY);
+                sf::Vector2f diff = pos - closestPoint;
+
+                float distanceSq = diff.x * diff.x + diff.y * diff.y;
+
+                if (distanceSq < radius * radius) {
+                    return true; 
+                }
+            }
+        }
+    }
+    return false;
+}
+
 void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
-    const int iterations = 5; 
+    for (size_t i = 0; i < waffles.size(); ++i) {
+        for (size_t j = i + 1; j < waffles.size(); ++j) {
+            sf::Vector2f diff = waffles[j].pos - waffles[i].pos;
+            float distance = std::sqrt(diff.x * diff.x + diff.y * diff.y);
+            float minDistance = waffleRadius * 2.f;
 
-    for (int iter = 0; iter < iterations; ++iter) {
-        for (size_t i = 0; i < waffles.size(); ++i) {
-            for (size_t j = i + 1; j < waffles.size(); ++j) {
-                sf::Vector2f diff = waffles[j].pos - waffles[i].pos;
-                float distance = std::sqrt(diff.x * diff.x + diff.y * diff.y);
-                float minDistance = waffleRadius * 2.f;
+            if (distance < minDistance && distance > 0.01f) {
+                sf::Vector2f direction(diff.x / distance, diff.y / distance);
+                float overlap = minDistance - distance;
 
-                if (distance < minDistance && distance > 0.01f) {
-                    sf::Vector2f direction(diff.x / distance, diff.y / distance);
+                bool iMoving = waffles[i].isSelected;
+                bool jMoving = waffles[j].isSelected;
 
-                    float overlap = minDistance - distance;
+                sf::Vector2f pushI, pushJ;
+                sf::Vector2f correction = 1.67f * direction * overlap;
+                if (iMoving && !jMoving) {
+                    pushJ = correction * 0.8f;
+                    pushI = correction * -0.2f;
+                }
+                else if (jMoving && !iMoving) {
+                    pushI = correction * -0.8f;
+                    pushJ = correction * 0.2f;
+                }
+                else {
+                    pushI = correction / -2.f;
+                    pushJ = correction / 2.f;
+                }
 
-                    // If selected + moving, pushes harder
-                    bool iMoving = waffles[i].isSelected;
-                    bool jMoving = waffles[j].isSelected;
+                sf::Vector2f newPosI = waffles[i].pos + pushI;
+                sf::Vector2f newPosJ = waffles[j].pos + pushJ;
 
-                    if (iMoving && !jMoving) {
-                        waffles[j].pos += direction * overlap * 0.8f;
-                        waffles[i].pos -= direction * overlap * 0.2f;
-                    }
-                    else if (jMoving && !iMoving) {
-                        waffles[i].pos -= direction * overlap * 0.8f;
-                        waffles[j].pos += direction * overlap * 0.2f;
-                    }
-                    else {
-                        sf::Vector2f correction = direction * (overlap / 2.f);
-                        waffles[i].pos -= correction;
-                        waffles[j].pos += correction;
-                    }
+                bool iCanMove = !wouldCollideWithWall(newPosI, waffleRadius);
+                bool jCanMove = !wouldCollideWithWall(newPosJ, waffleRadius);
+
+                if (iCanMove && jCanMove) {
+                    // Both move
+                    waffles[i].pos = newPosI;
+                    waffles[j].pos = newPosJ;
+                }
+                else if (iCanMove && !jCanMove) {
+                    waffles[i].pos = waffles[i].pos + -correction;
+                }
+                else if (!iCanMove && jCanMove) {
+                    waffles[j].pos = waffles[j].pos + correction;
                 }
             }
         }
@@ -234,12 +278,12 @@ void wallCollisions(std::vector<Waffle>& waffles) {
                         float distance = std::sqrt(distanceSq);
 
                         // Prevent division by zero
-                        if (distance > 0.00001f) {
+                        if (distance > 0.00000001f) {
                             sf::Vector2f direction(diff.x / distance, diff.y / distance);
                             float overlap = collisionRadius - distance;
 
                             // Hard push out of the wall
-                            w.pos += 1.5f * direction * overlap;
+                            w.pos += direction * overlap;
                         }
                     }
                 }
@@ -399,7 +443,7 @@ int main()
 
         camera.move(cameraMove);
         window.setView(camera);
-
+        // Movement loop
         for (auto& w : waffles) {
             if (!w.path.empty()) {
                 w.targetPos = w.path.front();
