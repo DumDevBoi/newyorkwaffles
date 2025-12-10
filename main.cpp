@@ -6,7 +6,7 @@ const float collisionRadius = 47.f;
 const float gridSize = 200.f;
 
 struct Waffle {
-    static size_t latestID;  // Shared
+    static size_t latestID;  // Shared across instances
     size_t id;             // Unique
 
     sf::Vector2f pos;
@@ -27,71 +27,25 @@ struct Waffle {
 
 size_t Waffle::latestID = 0;
 
-static inline long long hashKey(int gx, int gy) {
-    return (static_cast<long long>(gx) << 32) ^ static_cast<unsigned long long>(gy);
-}
-
-class EntityGrid {
-private:
-    std::unordered_map<long long, std::unordered_set<size_t>> wafflesInCell;
-    float cellSize;
-
-public:
-    EntityGrid(float size) : cellSize(size) {}
-
-    void addToCell(int gx, int gy, size_t waffleId) {
-        wafflesInCell[hashKey(gx, gy)].insert(waffleId);
-    }
-
-    void removeFromCell(int gx, int gy, size_t waffleId) {
-        auto key = hashKey(gx, gy);
-        auto it = wafflesInCell.find(key);
-        if (it != wafflesInCell.end()) {
-            it->second.erase(waffleId);
-            if (it->second.empty()) {
-                wafflesInCell.erase(it);
-            }
-        }
-    }
-
-    std::vector<size_t> getAdjacent(int gx, int gy) const {
-        std::vector<size_t> result;
-
-        for (int dx = -1; dx <= 1; ++dx) {
-            for (int dy = -1; dy <= 1; ++dy) {
-                auto it = wafflesInCell.find(hashKey(gx + dx, gy + dy));
-                if (it != wafflesInCell.end()) {
-                    result.insert(result.end(),
-                        it->second.begin(),
-                        it->second.end());
-                }
-            }
-        }
-        return result;
-    }
-
-    void clear() {
-        wafflesInCell.clear();
-    }
-};
-
-EntityGrid entityGrid(gridSize);
-
 inline bool isWall(int gx, int gy) {
-    // bit-shift grid coord, create unique 'seed' for every cell
     long long n = (long long)gx * 374761393 + (long long)gy * 668265263;
     n = (n ^ (n >> 13)) * 1274126177;
 
-    // 1% chance of a block appearing
+    // 1% chance of block appearing
     return ((n ^ (n >> 16)) & 100) < 1;
 }
+
+/* astar helpers -------------------------------------------------------------------------------------- */
+static inline long long hashKey(int gx, int gy) {
+    return (static_cast<long long>(gx) << 32) ^ static_cast<unsigned long long>(gy);
+} // also used in EntityGrid
 
 struct Node {
     int gx, gy;
     float g = 0.f;
     float h = 0.f;
     float f() const { return g + h; }
-    std::pair<int, int> parent = { INT_MIN, INT_MIN }; //coords 
+    std::pair<int, int> parent = { INT_MIN, INT_MIN }; //coords of previous node
 };
 
 static inline float heuristic(int ax, int ay, int bx, int by) {
@@ -101,7 +55,7 @@ static inline float heuristic(int ax, int ay, int bx, int by) {
     return std::sqrt(dx * dx + dy * dy);
 }
 
-static inline sf::Vector2f gridToWorldCenter(int gx, int gy) {
+static inline sf::Vector2f gridToWorldCoord(int gx, int gy) { // grid coords in 
     // center of cell
     return sf::Vector2f(gx * gridSize + gridSize * 0.5f, gy * gridSize + gridSize * 0.5f);
 }
@@ -117,6 +71,7 @@ static inline std::vector<std::pair<int, int>> getNeighbors(int gx, int gy) {
     }
     return n;
 }
+/* --------------------------------------------------------------------------------------------------- */
 
 std::deque<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf::Vector2f& goalWorld) {
     // Convert to grid coords
@@ -180,7 +135,7 @@ std::deque<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf:
             std::deque<sf::Vector2f> path;
             std::pair<int, int> cur = { cx, cy };
             while (!(cur.first == INT_MIN && cur.second == INT_MIN)) {
-                path.push_front(gridToWorldCenter(cur.first, cur.second));
+                path.push_front(gridToWorldCoord(cur.first, cur.second));
                 long long curk = hashKey(cur.first, cur.second);
                 auto it = nodes.find(curk);
                 if (it == nodes.end()) break;
@@ -227,7 +182,53 @@ std::deque<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf:
     return {};
 }
 
-bool wouldCollideWithWall(const sf::Vector2f& pos, float radius) {
+class EntityGrid {
+private:
+    std::unordered_map<long long, std::unordered_set<size_t>> wafflesInCell;
+    float cellSize;
+
+public:
+    EntityGrid(float size) : cellSize(size) {}
+
+    void addToCell(int gx, int gy, size_t waffleId) {
+        wafflesInCell[hashKey(gx, gy)].insert(waffleId);
+    }
+
+    void removeFromCell(int gx, int gy, size_t waffleId) {
+        auto key = hashKey(gx, gy);
+        auto it = wafflesInCell.find(key);
+        if (it != wafflesInCell.end()) {
+            it->second.erase(waffleId);
+            if (it->second.empty()) {
+                wafflesInCell.erase(it);
+            }
+        }
+    }
+
+    std::vector<size_t> queryNeighbors(int gx, int gy) const {
+        std::vector<size_t> result;
+
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                auto it = wafflesInCell.find(hashKey(gx + dx, gy + dy));
+                if (it != wafflesInCell.end()) {
+                    result.insert(result.end(),
+                        it->second.begin(),
+                        it->second.end());
+                }
+            }
+        }
+        return result;
+    }
+
+    void clear() {
+        wafflesInCell.clear();
+    }
+};
+
+EntityGrid entityGrid(gridSize);
+
+bool wouldCollideWithWall(const sf::Vector2f& pos, float radius) { // waffle collision helper
     int centerGx = static_cast<int>(std::floor(pos.x / gridSize));
     int centerGy = static_cast<int>(std::floor(pos.y / gridSize));
 
@@ -416,17 +417,17 @@ int main()
                     isDragging = false;
                     sf::Vector2f dragEnd = window.mapPixelToCoords(mouseButton->position);
 
-                    // Create selection rectangle
+                    // selection rectangle
                     float minX = std::min(dragStart.x, dragEnd.x);
                     float maxX = std::max(dragStart.x, dragEnd.x);
                     float minY = std::min(dragStart.y, dragEnd.y);
                     float maxY = std::max(dragStart.y, dragEnd.y);
 
-                    // Check if it was just a click (small drag area)
+                    // Check if click (small drag area)
                     bool isClick = std::abs(dragEnd.x - dragStart.x) < 5.f &&
                         std::abs(dragEnd.y - dragStart.y) < 5.f;
 
-                    // Clear previous selection if not holding shift
+                    // Clear prev selection if not holding shift
                     if (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift)) {
                         for (auto& w : waffles) {
                             w.isSelected = false;
@@ -455,7 +456,7 @@ int main()
                 }
             }
 
-            // Right mouse button - move selected waffles
+            // Right click - move selected waffles
             if (const auto* mouseButton = event->getIf<sf::Event::MouseButtonPressed>()) {
                 if (mouseButton->button == sf::Mouse::Button::Right) {
                     sf::Vector2f clickPos = window.mapPixelToCoords(mouseButton->position);
@@ -474,7 +475,7 @@ int main()
                 }
             }
 
-            // Zoom with mouse wheel
+            // mouse wheel zoom
             if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
                 if (wheel->wheel == sf::Mouse::Wheel::Vertical) {
                     if (wheel->delta > 0 && zoomLevel > minZoom) {
