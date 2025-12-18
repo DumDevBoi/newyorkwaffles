@@ -15,10 +15,10 @@ struct Waffle {
     std::deque<sf::Vector2f> path; // world positions of path nodes 
     int gridX = 0;
     int gridY = 0;
-    Waffle(sf::Vector2f position) : 
-        pos(position), 
-        targetPos(position), 
-        id(latestID++) 
+    Waffle(sf::Vector2f position) :
+        pos(position),
+        targetPos(position),
+        id(latestID++)
     {
         gridX = static_cast<int>(std::floor(pos.x / gridSize));
         gridY = static_cast<int>(std::floor(pos.y / gridSize));
@@ -55,7 +55,7 @@ static inline float heuristic(int ax, int ay, int bx, int by) {
     return std::sqrt(dx * dx + dy * dy);
 }
 
-static inline sf::Vector2f gridToWorldCoord(int gx, int gy) { // grid coords in 
+static inline sf::Vector2f gridToWorldCoord(int gx, int gy) { // grid coords input 
     // center of cell
     return sf::Vector2f(gx * gridSize + gridSize * 0.5f, gy * gridSize + gridSize * 0.5f);
 }
@@ -123,7 +123,7 @@ std::deque<sf::Vector2f> findPathAstar(const sf::Vector2f& startWorld, const sf:
     std::unordered_set<long long> closed;
 
     while (!openPQ.empty()) {
-        auto top = openPQ.top(); 
+        auto top = openPQ.top();
         openPQ.pop();
         int cx = top.gx;
         int cy = top.gy;
@@ -251,7 +251,7 @@ bool wouldCollideWithWall(const sf::Vector2f& pos, float radius) { // waffle col
                 float distanceSq = diff.x * diff.x + diff.y * diff.y;
 
                 if (distanceSq < radius * radius) {
-                    return true; 
+                    return true;
                 }
             }
         }
@@ -260,9 +260,34 @@ bool wouldCollideWithWall(const sf::Vector2f& pos, float radius) { // waffle col
 }
 
 void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
+    entityGrid.clear();
+    for (const auto& w : waffles) {
+        entityGrid.addToCell(w.gridX, w.gridY, w.id);
+    }
+
+    // Track pairs already checked
+    std::unordered_set<size_t> processed;
+
     for (size_t i = 0; i < waffles.size(); ++i) {
-        for (size_t j = i + 1; j < waffles.size(); ++j) {
-            sf::Vector2f diff = waffles[j].pos - waffles[i].pos;
+        auto& waffleI = waffles[i];
+
+        std::vector<size_t> nearbyIds = entityGrid.queryNeighbors(waffleI.gridX, waffleI.gridY);
+
+        for (size_t nearbyId : nearbyIds) {
+            if (nearbyId == waffleI.id) continue;
+
+            size_t j = 0;
+            for (; j < waffles.size(); ++j) {
+                if (waffles[j].id == nearbyId) break;
+            }
+            if (j >= waffles.size()) continue;
+
+            // Skip i-j and j-i
+            if (i >= j) continue;
+
+            auto& waffleJ = waffles[j];
+
+            sf::Vector2f diff = waffleJ.pos - waffleI.pos;
             float distance = std::sqrt(diff.x * diff.x + diff.y * diff.y);
             float minDistance = waffleRadius * 2.f;
 
@@ -270,8 +295,8 @@ void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
                 sf::Vector2f direction(diff.x / distance, diff.y / distance);
                 float overlap = minDistance - distance;
 
-                bool iMoving = waffles[i].isSelected;
-                bool jMoving = waffles[j].isSelected;
+                bool iMoving = waffleI.isSelected;
+                bool jMoving = waffleJ.isSelected;
 
                 sf::Vector2f pushI, pushJ;
                 sf::Vector2f correction = 1.67f * direction * overlap;
@@ -288,22 +313,21 @@ void waffleCollisions(std::vector<Waffle>& waffles, float waffleRadius) {
                     pushJ = correction / 2.f;
                 }
 
-                sf::Vector2f newPosI = waffles[i].pos + pushI;
-                sf::Vector2f newPosJ = waffles[j].pos + pushJ;
+                sf::Vector2f newPosI = waffleI.pos + pushI;
+                sf::Vector2f newPosJ = waffleJ.pos + pushJ;
 
                 bool iCanMove = !wouldCollideWithWall(newPosI, waffleRadius);
                 bool jCanMove = !wouldCollideWithWall(newPosJ, waffleRadius);
 
                 if (iCanMove && jCanMove) {
-                    // Both move
-                    waffles[i].pos = newPosI;
-                    waffles[j].pos = newPosJ;
+                    waffleI.pos = newPosI;
+                    waffleJ.pos = newPosJ;
                 }
                 else if (iCanMove && !jCanMove) {
-                    waffles[i].pos = waffles[i].pos + -correction;
+                    waffleI.pos = waffleI.pos + -correction;
                 }
                 else if (!iCanMove && jCanMove) {
-                    waffles[j].pos = waffles[j].pos + correction;
+                    waffleJ.pos = waffleJ.pos + correction;
                 }
             }
         }
@@ -343,7 +367,6 @@ void wallCollisions(std::vector<Waffle>& waffles) {
                             sf::Vector2f direction(diff.x / distance, diff.y / distance);
                             float overlap = collisionRadius - distance;
 
-                            // Hard push out of the wall
                             w.pos += direction * overlap;
                         }
                     }
@@ -544,6 +567,12 @@ int main()
                     }
                 }
             }
+        }
+
+        // Update grid positions after movement
+        for (auto& w : waffles) {
+            w.gridX = static_cast<int>(std::floor(w.pos.x / gridSize));
+            w.gridY = static_cast<int>(std::floor(w.pos.y / gridSize));
         }
 
         waffleCollisions(waffles, collisionRadius);
